@@ -6,7 +6,8 @@
 过小的候选会被标记为 **待确认（needs_review）**，并在界面上展示命中词元、冲突字段与
 可复核结果。
 
-- 🌐 网页界面：单条/批量匹配、**规则 A/B 对照实验**、上传标准地址 CSV、待确认队列人工复核（含同案合并复核、复核共识记忆）
+- 🌐 网页界面：单条/批量匹配、**规则 A/B 对照实验**、上传标准地址 CSV、待确认队列人工复核（含同案合并复核、复核共识记忆）、**地址覆盖缺口**清单
+- 🧭 **地址覆盖缺口**：从已保存且状态为 `no_match` 的匹配日志，按归一化后的**道路词元、地区词元与门牌号**归组（同键只算一个缺口，门牌号不同不合并），展示出现次数、原始查询示例与最近出现时间；每次打开清单都用**当前标准地址表与默认规则**重跑每组代表查询——已自动命中的组标为**「已覆盖」**并显示目标地址，其余标为**「待补录」**并给出当前首选候选。上传缺失地址后旧的拒绝记录不再被当作未解决；纯读取，不改写原日志或评分规则
 - 🧪 **规则 A/B 对照实验**：提交 2～4 个命名规则档案（自动命中/拒绝/分差阈值 + 词元权重）与 1～100 条查询，在同一地址表快照下逐档运行，逐条对比状态/首选/得分/候选差异并标出不一致与触发阈值，结果按实验编号持久化回看
 - 📈 **历史回归对比**：任选两次已持久化实验，服务端按档案名称与去首尾空白后的查询逐档对齐（缺失档案 / 重复查询直接拒绝），逐单元分类为 改善 / 退化 / 仅分数变化 / 无变化 并汇总；地址表快照 digest 不同时提示不可直接比较但仍展示逐条差异；页面支持按类别筛选与 CSV 下载
 - 🔌 REST API：`/api/match`、`/api/match/batch`、`/api/addresses`、复核接口、A/B 实验接口（含 `/docs` Swagger）
@@ -397,6 +398,42 @@ curl -s -X POST http://localhost:8000/api/review-groups/review \
 
 ---
 
+## 地址覆盖缺口
+
+网页打开 **http://localhost:8000** 后切换到 **「地址覆盖缺口」** 标签（标签上的数字为当前待补录缺口数），
+或直接调用 `GET /api/coverage-gaps`。清单用来回答一个问题：**历史被判无匹配的地址，在当前标准地址表下到底缺不缺？**
+
+- **归组**：只统计**已保存**且状态为 `no_match` 的匹配日志（不保存的匹配、待确认 / 自动命中记录都不计），
+  按查询归一化后的 **道路词元（排序）+ 地区词元（排序）+ 门牌号** 归组；
+  同一键只算一个缺口，**门牌号不同绝不合并**。
+- **展示**：每个缺口给出出现次数、最多 3 条原始查询示例（含日志编号与时间）、
+  首次 / 最近出现时间，以及全部成员日志编号。
+- **实时重跑**：每次打开清单（或点击「刷新」）都取每组**最近一次原始查询作为代表**，
+  用**当前标准地址表快照**与**默认规则**（`AUTO_THRESHOLD` 等环境变量配置，与常规单条匹配一致）
+  重新跑一遍现有匹配器——**不查复核共识、不写日志、不改评分规则**：
+  - 重跑为 `auto_matched` → 标为 **✅ 已覆盖**，显示自动命中的标准地址；
+  - 重跑仍为 `no_match`，或因门牌号冲突等变为 `needs_review` → 标为 **📌 待补录**，
+    并显示当前首选候选与完整候选明细（得分、命中词元、冲突字段可展开查看）。
+- **筛选**：支持 `待补录 / 全部 / 已覆盖`（API 参数 `state=open|covered|all`）。
+  因此上传缺失地址后再打开清单，对应的旧拒绝记录会自动移入「已覆盖」，不会一直被当作未解决缺口；
+  原始 `no_match` 日志始终保持不变。
+
+```bash
+# 查看缺口清单（默认全部；state=open 只看待补录，state=covered 只看已覆盖）
+curl -s 'http://localhost:8000/api/coverage-gaps?state=all'
+# => {"total": 1, "open": 1, "covered": 0, "state": "all",
+#     "gaps": [{"group_key": "…", "street_tokens": ["milky", "way"],
+#               "locality_tokens": ["base", "mars"], "house": "1",
+#               "count": 3, "example_query": "1 Milky Way, Mars Base",
+#               "examples": [{"id": 12, "query": "…", "created_at": "…"}],
+#               "first_seen_at": "…", "last_seen_at": "…",
+#               "state": "open", "current_status": "no_match",
+#               "best_candidate": null, "covered_target": null,
+#               "current": {"status": "no_match", "candidates": []}}]}
+```
+
+---
+
 ## API 速览
 
 | 方法 | 路径 | 说明 |
@@ -419,6 +456,7 @@ curl -s -X POST http://localhost:8000/api/review-groups/review \
 | POST | `/api/matches/{id}/review` | 单条复核：confirmed / overridden / rejected |
 | GET | `/api/review-groups` | 待确认记录的同案分组（归一化键 + 候选签名归组，含组内原始查询与数量） |
 | POST | `/api/review-groups/review` | 整组复核：单事务核对组签名与成员集合，冲突返回 409 且一条不写 |
+| GET | `/api/coverage-gaps` | 地址覆盖缺口：no_match 日志按归一化道路/地区词元+门牌号归组，实时用当前地址表与默认规则重跑，返回待补录（open）/已覆盖（covered），支持 `state` 筛选 |
 
 匹配结果示例（节选）：
 
@@ -463,6 +501,7 @@ curl -s -X POST http://localhost:8000/api/review-groups/review \
 │   ├── experiments.py     # 规则 A/B 对照实验：逐档运行、差异分析与持久化；历史回归对比（对齐/分类/汇总）
 │   ├── consensus.py       # 复核共识记忆：历史复核聚合与自动指向
 │   ├── review_groups.py   # 同案合并复核：归组与整组事务写入
+│   ├── coverage_gaps.py   # 地址覆盖缺口：no_match 日志归组并用当前地址表/默认规则实时重跑
 │   ├── ingest.py          # CSV / JSON 标准地址导入
 │   ├── schemas.py         # Pydantic 模型
 │   ├── templates/         # 网页（Jinja2，单页）

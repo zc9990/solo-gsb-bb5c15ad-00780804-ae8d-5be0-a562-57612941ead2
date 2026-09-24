@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import consensus, db, experiments, ingest, review_groups
+from . import consensus, coverage_gaps, db, experiments, ingest, review_groups
 from .config import Settings, get_settings
 from .matcher import candidate_to_dict, match_address, result_to_dict
 from .schemas import (
@@ -412,6 +412,32 @@ def review_group(payload: GroupReviewAction,
     except review_groups.GroupReviewError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, **result}
+
+
+# --- address coverage gaps --------------------------------------------------
+
+
+@app.get("/api/coverage-gaps")
+def list_coverage_gaps(state: str = "all",
+                       conn: db.sqlite3.Connection = Depends(get_conn),
+                       settings: Settings = Depends(settings_dep)) -> dict[str, Any]:
+    """地址覆盖缺口：从已保存的 no_match 日志按归一化键归组的缺口清单。
+
+    每次请求都用当前标准地址表与默认规则重跑每组代表查询：自动命中的组标为
+    「已覆盖」（``covered``）并给出目标地址，其余标为「待补录」（``open``）
+    并给出当前首选候选。清单为纯读取，不写日志、不改评分。
+    """
+    if state not in {"all", "open", "covered"}:
+        raise HTTPException(status_code=400, detail="非法 state 过滤值")
+    gaps = coverage_gaps.compute_gaps(conn, settings)
+    counts = {
+        "total": len(gaps),
+        "open": sum(1 for g in gaps if g["state"] == "open"),
+        "covered": sum(1 for g in gaps if g["state"] == "covered"),
+    }
+    if state != "all":
+        gaps = [g for g in gaps if g["state"] == state]
+    return {**counts, "state": state, "gaps": gaps}
 
 
 # --- rule A/B comparison experiments ----------------------------------------

@@ -214,8 +214,37 @@ th { color: var(--muted); font-weight: 600; }
     font-size: 12px; border-radius: 6px;
 }
 
-/* ============================================================ A/B experiments */
+/* ======================================================== coverage gaps */
 
+.gap-item {
+    border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; margin-top: 12px; background: #fbfcff;
+}
+.gap-item.open { border-left: 3px solid var(--amber); }
+.gap-item.covered { border-left: 3px solid var(--green); background: #f8fdfa; }
+.gap-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.gap-state {
+    display: inline-block; padding: 3px 12px; border-radius: 999px;
+    font-size: 12px; font-weight: 700;
+}
+.gap-state.open { background: var(--amber-bg); color: var(--amber); }
+.gap-state.covered { background: var(--green-bg); color: var(--green); }
+.gap-meta { margin: 8px 0; line-height: 1.7; }
+.gap-examples > summary, .gap-candidates > summary {
+    cursor: pointer; font-size: 13px; color: var(--primary); margin: 6px 0;
+}
+.gap-covered-banner {
+    margin: 8px 0; padding: 8px 12px; border-radius: 8px;
+    border-left: 3px solid var(--green);
+    background: var(--green-bg); color: var(--green); font-size: 13px;
+}
+.gap-open-banner {
+    margin: 8px 0; padding: 8px 12px; border-radius: 8px;
+    border-left: 3px solid var(--amber);
+    background: var(--amber-bg); color: var(--amber); font-size: 13px;
+}
+
+/* ============================================================ A/B experiments */
 .ab-subtitle { margin-top: 18px; }
 .ab-profiles { display: grid; gap: 10px; }
 .ab-profile {

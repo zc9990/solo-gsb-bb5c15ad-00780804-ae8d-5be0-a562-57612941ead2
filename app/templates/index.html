@@ -20,6 +20,7 @@
     <button class="tab" data-tab="experiment">规则 A/B 实验</button>
     <button class="tab" data-tab="table">标准地址表 <span id="addr-count" class="count"></span></button>
     <button class="tab" data-tab="review">待确认队列 <span id="review-count" class="count"></span></button>
+    <button class="tab" data-tab="gaps">地址覆盖缺口 <span id="gaps-count" class="count"></span></button>
 </nav>
 
 <main>
@@ -139,6 +140,30 @@
             </div>
             <div id="review-groups"></div>
             <div id="review-list"></div>
+        </div>
+    </section>
+
+    <!-- ====================== address coverage gaps ==================== -->
+    <section id="tab-gaps" class="panel">
+        <div class="card">
+            <h2>地址覆盖缺口</h2>
+            <p class="hint">
+                从已保存且判为<b>无匹配</b>的匹配日志，按归一化后的<b>道路词元、地区词元与门牌号</b>归组
+                （同键只算一个缺口，门牌号不同不合并）。每次打开都用<b>当前标准地址表与默认规则</b>重跑每组代表查询：
+                已能自动命中的组标为 <span class="status auto_matched">已覆盖</span>，
+                其余标为 <span class="status needs_review">待补录</span> 并展示当前首选候选。
+                仅重新读取与评分，不改写历史日志或评分规则。
+            </p>
+            <div class="row">
+                <select id="gaps-filter">
+                    <option value="open">仅待补录</option>
+                    <option value="all">全部缺口</option>
+                    <option value="covered">仅已覆盖</option>
+                </select>
+                <button id="btn-refresh-gaps" class="ghost">刷新（重跑代表查询）</button>
+                <span id="gaps-summary" class="muted"></span>
+            </div>
+            <div id="gaps-list"></div>
         </div>
     </section>
 </main>

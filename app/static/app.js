@@ -193,6 +193,7 @@ $$(".tab").forEach((btn) => {
         $(`#tab-${btn.dataset.tab}`).classList.add("active");
         if (btn.dataset.tab === "table") loadAddresses();
         if (btn.dataset.tab === "review") loadReview();
+        if (btn.dataset.tab === "gaps") loadGaps();
         if (btn.dataset.tab === "experiment") {
             renderProfileEditor();
             loadExperimentHistory();
@@ -614,10 +615,92 @@ $("#review-groups").addEventListener("click", async (event) => {
     }
 });
 
+// ------------------------------------------------------- coverage gaps
+
+const GAPS_STATE_LABEL = {
+    open: "待补录",
+    covered: "已覆盖",
+};
+
+function renderGap(gap) {
+    const current = gap.current || {};
+    const examples = (gap.examples || []).map((m) => `
+        <div class="gq">🔍 ${escapeHtml(m.query)}
+            <span class="muted">记录 #${m.id} · ${escapeHtml(m.created_at || "")}</span>
+        </div>`).join("");
+    const coveredBanner = gap.state === "covered" && gap.covered_target ? `
+        <div class="gap-covered-banner">
+            ✅ 已覆盖：当前默认规则重跑代表查询自动命中
+            <b>标准地址 #${gap.covered_target.id} ${escapeHtml(gap.covered_target.full_text)}</b>
+        </div>` : `
+        <div class="gap-open-banner">
+            📌 待补录：当前重跑结果为「${STATUS_LABEL[gap.current_status] || gap.current_status}」
+            ${gap.best_candidate ?
+                `· 当前首选候选 <b>#${gap.best_candidate.id} ${escapeHtml(gap.best_candidate.full_text)}</b>` :
+                "· 当前无任何候选"}
+        </div>`;
+    const candidates = (current.candidates || [])
+        .map((c, i) => renderCandidate(c, i, {})).join("")
+        || '<div class="meta muted">标准地址表中没有任何候选</div>';
+    return `
+    <div class="gap-item ${gap.state}">
+        <div class="gap-head">
+            <span class="gap-state ${gap.state}">${GAPS_STATE_LABEL[gap.state] || gap.state}</span>
+            <span class="group-badge">出现 × ${gap.count}</span>
+            <span class="muted">
+                归一化：道路 [${escapeHtml((gap.street_tokens || []).join(" ") || "—")}]
+                · 地区 [${escapeHtml((gap.locality_tokens || []).join(" ") || "—")}]
+                · 门牌号 ${escapeHtml(gap.house || "无")}
+            </span>
+        </div>
+        <div class="gap-meta muted">
+            代表查询（最近一次）：<b>${escapeHtml(gap.example_query || "")}</b><br>
+            首次出现 ${escapeHtml(gap.first_seen_at || "")}
+            · 最近出现 ${escapeHtml(gap.last_seen_at || "")}
+            · 日志记录 ${(gap.match_ids || []).map((id) => `#${id}`).join(" ")}
+        </div>
+        <details class="gap-examples" open>
+            <summary>原始查询示例（最多 3 条）</summary>
+            <div class="group-queries">${examples}</div>
+        </details>
+        ${coveredBanner}
+        <div class="muted">${escapeHtml(gap.current_reason || current.reason || "")}</div>
+        ${current.runner_up_id ? `<div class="muted">次高分候选 #${current.runner_up_id}：${pct(current.runner_up_score)}</div>` : ""}
+        <details class="gap-candidates">
+            <summary>当前重跑候选（${(current.candidates || []).length}）</summary>
+            ${candidates}
+        </details>
+    </div>`;
+}
+
+async function loadGaps() {
+    const state = $("#gaps-filter").value;
+    const list = $("#gaps-list");
+    const summary = $("#gaps-summary");
+    list.innerHTML = '<p class="muted">正在用当前标准地址表重跑每组代表查询…</p>';
+    try {
+        const data = await api(`/api/coverage-gaps?state=${encodeURIComponent(state)}`);
+        $("#gaps-count").textContent = data.open ? data.open : "";
+        summary.textContent =
+            `共 ${data.total} 个缺口：待补录 ${data.open}，已覆盖 ${data.covered}`;
+        if (data.gaps.length === 0) {
+            list.innerHTML = state === "open"
+                ? '<p class="muted">没有待补录缺口：历史无匹配记录当前都能自动命中，或暂无无匹配日志。</p>'
+                : '<p class="muted">暂无缺口记录（保存的无匹配日志会在此归组）。</p>';
+            return;
+        }
+        list.innerHTML = data.gaps.map(renderGap).join("");
+    } catch (err) {
+        list.innerHTML = `<p class="err-msg">${escapeHtml(err.message)}</p>`;
+    }
+}
+
+$("#btn-refresh-gaps").addEventListener("click", loadGaps);
+$("#gaps-filter").addEventListener("change", loadGaps);
+
 // ------------------------------------------------------------------ health
 
-async function refreshHealth() {
-    try {
+async function refreshHealth() {    try {
         const h = await api("/api/health");
         $("#health").textContent = `标准地址 ${h.address_count} 条 · 待确认 ${h.needs_review}`;
         $("#health").className = "badge ok";
@@ -631,6 +714,8 @@ async function refreshHealth() {
 }
 
 refreshHealth();
+// Populate the open-gap count on the tab badge at start-up as well.
+loadGaps();
 
 // ========================================================== A/B experiments
 
