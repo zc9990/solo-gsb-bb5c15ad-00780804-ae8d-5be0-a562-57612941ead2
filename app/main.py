@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import consensus, db, experiments, ingest, review_groups
+from . import consensus, coverage_gaps, db, experiments, ingest, review_groups
 from .config import Settings, get_settings
 from .matcher import candidate_to_dict, match_address, result_to_dict
 from .schemas import (
@@ -412,6 +412,27 @@ def review_group(payload: GroupReviewAction,
     except review_groups.GroupReviewError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, **result}
+
+
+# --- address coverage gaps --------------------------------------------------
+
+
+@app.get("/api/coverage-gaps")
+def list_coverage_gaps(status: str | None = None,
+                       conn: db.sqlite3.Connection = Depends(get_conn),
+                       settings: Settings = Depends(settings_dep)) -> dict[str, Any]:
+    """地址覆盖缺口：从已保存的 ``no_match`` 日志按归一化道路/地区词元 +
+    门牌号归组；每次调用都用当前标准地址表与默认规则重跑各组代表查询，
+    自动命中的组标为 ``covered``（已覆盖），其余标为 ``open``（待补录）。
+
+    只读操作：不写入、不改写任何匹配日志或评分。
+    """
+    if status is not None and status not in coverage_gaps.VALID_COVERAGE:
+        raise HTTPException(
+            status_code=400,
+            detail="非法 status 过滤值，仅支持 open / covered",
+        )
+    return coverage_gaps.compute_gaps(conn, settings, coverage=status)
 
 
 # --- rule A/B comparison experiments ----------------------------------------

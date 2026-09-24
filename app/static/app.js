@@ -130,9 +130,12 @@ function renderCandidate(cand, rank, opts = {}) {
     const actionAttrs = opts.reviewable
         ? `data-log="${opts.logId}" data-address="${a.id}"`
         : "";
-    const ribbon = opts.consensusTargetId === a.id
-        ? `<span class="target-ribbon">共识指向</span>`
-        : "";
+    let ribbon = "";
+    if (opts.consensusTargetId === a.id) {
+        ribbon = `<span class="target-ribbon">共识指向</span>`;
+    } else if (opts.targetRibbon && opts.targetRibbon.id === a.id) {
+        ribbon = `<span class="target-ribbon">${escapeHtml(opts.targetRibbon.label)}</span>`;
+    }
     return `
     <div class="candidate${bestCls}">
         <div class="addr">#${rank + 1} ${escapeHtml(a.full_text)} ${ribbon}</div>
@@ -193,6 +196,7 @@ $$(".tab").forEach((btn) => {
         $(`#tab-${btn.dataset.tab}`).classList.add("active");
         if (btn.dataset.tab === "table") loadAddresses();
         if (btn.dataset.tab === "review") loadReview();
+        if (btn.dataset.tab === "gaps") loadCoverageGaps();
         if (btn.dataset.tab === "experiment") {
             renderProfileEditor();
             loadExperimentHistory();
@@ -235,6 +239,7 @@ $("#btn-match").addEventListener("click", async () => {
                 .join("");
         }
         refreshHealth();
+        refreshGapsBadge();
     } catch (err) {
         $("#results").innerHTML = `<p class="err-msg">${escapeHtml(err.message)}</p>`;
     } finally {
@@ -614,7 +619,130 @@ $("#review-groups").addEventListener("click", async (event) => {
     }
 });
 
+// -------------------------------------------------------- coverage gaps
+
+// Full manifest from the last load; the badge is refreshed from these
+// responses only after the tab has been opened at least once (the endpoint
+// re-runs every representative query, so we don't poll it from health).
+let gapsData = null;
+let gapsEverLoaded = false;
+
+function renderGap(group) {
+    const covered = group.coverage === "covered";
+    const badge = covered
+        ? '<span class="gap-state covered">✓ 已覆盖</span>'
+        : '<span class="gap-state open">⛏ 待补录</span>';
+    const rerun = group.rerun || {};
+    const best = (rerun.candidates || [])[0] || null;
+
+    const headLine = covered
+        ? `<div class="gap-target">
+               代表查询现已自动命中 → <b>#${rerun.best_id}</b>
+               ${best ? escapeHtml(best.address.full_text) : ""}
+           </div>`
+        : best
+            ? `<div class="gap-target">当前首选候选：<b>#${best.address.id}</b>
+               ${escapeHtml(best.address.full_text)}
+               <span class="muted">（综合 ${pct(best.score)} · ${escapeHtml(rerun.reason || "")}）</span></div>`
+            : '<div class="gap-target muted">当前标准地址表中没有任何候选</div>';
+
+    const examples = group.examples.map((ex) => `
+        <div class="gq">🔍 ${escapeHtml(ex.query)} <span class="muted">记录 #${ex.id}</span></div>
+    `).join("");
+    const more = group.example_truncated
+        ? `<div class="muted">另有 ${group.distinct_query_count - group.examples.length} 条不同写法未展开</div>`
+        : "";
+
+    const targetRibbon = covered && best
+        ? { id: best.address.id, label: "已覆盖目标" }
+        : null;
+    const candidates = (rerun.candidates || [])
+        .map((c, i) => renderCandidate(c, i, { targetRibbon }))
+        .join("");
+
+    return `
+    <div class="gap-item${covered ? " covered" : ""}">
+        <div class="gap-head">
+            ${badge}
+            <span class="group-badge gap-count">出现 ${group.count} 次</span>
+            <span class="muted">
+                归一化：道路 [${escapeHtml(group.street_tokens.join(" ") || "—")}]
+                · 地区 [${escapeHtml(group.locality_tokens.join(" ") || "—")}]
+                · 门牌号 <b>${escapeHtml(group.house || "无")}</b>
+            </span>
+        </div>
+        <div class="gap-meta muted">
+            代表查询：🔍 ${escapeHtml(group.representative_query)}
+            （记录 #${group.representative_match_id}）
+            · 最近出现 ${escapeHtml(group.last_seen_at || "")}
+            · 首次出现 ${escapeHtml(group.first_seen_at || "")}
+        </div>
+        <div class="group-queries gap-examples">${examples}${more}</div>
+        ${headLine}
+        <details class="gap-details">
+            <summary>本次重跑候选明细（${(rerun.candidates || []).length}）</summary>
+            ${candidates || '<div class="meta muted">无候选</div>'}
+        </details>
+    </div>`;
+}
+
+async function loadCoverageGaps() {
+    const filter = $("#gaps-filter").value;
+    const list = $("#gaps-list");
+    list.innerHTML = '<p class="muted">正在用当前标准地址表重跑各组代表查询…</p>';
+    try {
+        const qs = filter ? `?status=${encodeURIComponent(filter)}` : "";
+        gapsData = await api(`/api/coverage-gaps${qs}`);
+        gapsEverLoaded = true;
+        $("#gaps-count").textContent = gapsData.open || "";
+        $("#gaps-summary").innerHTML =
+            `<span class="muted">共 <b>${gapsData.total_groups}</b> 个缺口键` +
+            `（源自 ${gapsData.source_records} 条无匹配日志）：` +
+            `<span class="gap-state open">待补录 ${gapsData.open}</span>` +
+            ` <span class="gap-state covered">已覆盖 ${gapsData.covered}</span>` +
+            ` · 重跑时间 ${escapeHtml(gapsData.generated_at)}</span>`;
+        if (gapsData.groups.length === 0) {
+            list.innerHTML = '<p class="muted">当前筛选条件下没有缺口记录。</p>';
+            return;
+        }
+        list.innerHTML = gapsData.groups.map(renderGap).join("");
+    } catch (err) {
+        list.innerHTML = `<p class="err-msg">${escapeHtml(err.message)}</p>`;
+    }
+}
+
+$("#btn-refresh-gaps").addEventListener("click", loadCoverageGaps);
+$("#gaps-filter").addEventListener("change", loadCoverageGaps);
+
 // ------------------------------------------------------------------ health
+
+async function refreshGapsBadge() {
+    // Keep the tab badge current after new matches; the endpoint still
+    // re-runs each representative query, so this only happens once the user
+    // has opened the tab at least once.
+    if (!gapsEverLoaded) return;
+    try {
+        const data = await api("/api/coverage-gaps?status=open");
+        $("#gaps-count").textContent = data.open || "";
+        // While the gaps tab is open on the "open" filter (e.g. right after
+        // a batch match), keep its list in sync with the fresh re-run too.
+        if ($("#tab-gaps").classList.contains("active")
+                && $("#gaps-filter").value === "open") {
+            gapsData = data;
+            $("#gaps-summary").innerHTML =
+                `<span class="muted">共 <b>${data.total_groups}</b> 个缺口键` +
+                `（源自 ${data.source_records} 条无匹配日志）：` +
+                `<span class="gap-state open">待补录 ${data.open}</span>` +
+                ` <span class="gap-state covered">已覆盖 ${data.covered}</span>` +
+                ` · 重跑时间 ${escapeHtml(data.generated_at)}</span>`;
+            $("#gaps-list").innerHTML = data.groups.length
+                ? data.groups.map(renderGap).join("")
+                : '<p class="muted">当前筛选条件下没有缺口记录。</p>';
+        }
+    } catch (err) {
+        // Badge refresh is best-effort; ignore failures.
+    }
+}
 
 async function refreshHealth() {
     try {
